@@ -112,6 +112,7 @@ msbuild_run() {
 	"$MSBUILD" "$@" \
 		-p:RestorePackagesConfig=true \
 		-p:preferredtoolarchitecture=x64 \
+		-p:Platform=x64 \
 		-p:configuration=release \
 		-p:WindowsTargetPlatformVersion="$WIN_SDK" \
 		-maxcpucount:"$JOB_SLOTS" \
@@ -130,7 +131,7 @@ msbuild_run() {
 	fi
 }
 
-# Smoke gate: fail fast on VMP-touched leaves before full solution (~saves 20–40min).
+# Smoke gate: compile-only on VMP-touched leaves before full solution.
 for proj in ros-patches-five discord glue; do
 	if [[ -f "${proj}.vcxproj" ]]; then
 		msbuild_run "smoke:${proj}" "${proj}.vcxproj" -t:ClCompile -restore
