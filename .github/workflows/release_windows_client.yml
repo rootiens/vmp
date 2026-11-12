@@ -1,24 +1,18 @@
 name: Release Windows client
 
 on:
+  push:
+    branches:
+      - ci/release-windows-client
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Tag name for the GitHub Release (example vmp-client-crashlog-1)
-        required: true
-        type: string
-      make_latest:
-        description: Mark this GitHub Release as latest
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
   packages: read
+  actions: read
 
 concurrency:
-  group: release-windows-client-${{ github.ref }}
+  group: release-windows-client
   cancel-in-progress: true
 
 jobs:
@@ -28,10 +22,12 @@ jobs:
     timeout-minutes: 360
     env:
       PROGRAM: five
+      RELEASE_TAG: vmp-win-${{ github.run_number }}
     steps:
       - name: Prepare workspace
         shell: bash
         run: |
+          set -euo pipefail
           ROOT="C:/b"
           ROOT_REPO="$ROOT/five"
           ROOT_DEP="$ROOT/dep"
@@ -40,9 +36,9 @@ jobs:
           echo "ROOT_REPO=$ROOT_REPO" >> "$GITHUB_ENV"
           echo "ROOT_DEP=$ROOT_DEP" >> "$GITHUB_ENV"
           echo "JOB_SLOTS=$JOB_SLOTS" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
 
           mkdir -p "$ROOT_REPO" "$ROOT_DEP"
+          echo "Building ${{ github.sha }} as tag $RELEASE_TAG"
 
       - name: Checkout branch
         shell: bash
@@ -98,13 +94,15 @@ jobs:
           .github/workflows/ci/build_windows.sh "$ROOT_DEP" "$JOB_SLOTS"
 
       - name: Stage release package
+        id: pack
         shell: bash
         run: |
           set -euo pipefail
           cd "$ROOT_REPO"
 
           OUT_DIR="$ROOT_REPO/artifacts/vmp-windows-client"
-          rm -rf "$OUT_DIR" "$ROOT_REPO/artifacts/vmp-windows-client.zip"
+          ZIP_PATH="$ROOT_REPO/artifacts/vmp-windows-client-$RELEASE_TAG.zip"
+          rm -rf "$OUT_DIR" "$ROOT_REPO/artifacts"/*.zip
           mkdir -p "$OUT_DIR"
 
           if [[ -d code/bin/five/release ]]; then
@@ -113,45 +111,50 @@ jobs:
             cp -a code/bin/five/Release/. "$OUT_DIR/"
           else
             echo "::error::Release output folder not found under code/bin/five/"
-            find code/bin -maxdepth 3 -type d -print || true
+            find code/bin -maxdepth 4 -type d -print || true
             exit 1
           fi
 
           {
             echo "repo=${{ github.repository }}"
-            echo "ref=${{ github.ref_name }}"
+            echo "branch=${{ github.ref_name }}"
             echo "sha=${{ github.sha }}"
+            echo "tag=$RELEASE_TAG"
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "note=Developer Windows client binaries from CI. Replace into an existing VMP install for testing; this is not the full website installer."
+            echo "note=Developer Windows client binaries from CI. Not the full website installer. Use for testing crash-logging builds on top of an existing VMP install."
           } > "$OUT_DIR/BUILD_INFO.txt"
 
           powershell.exe -NoProfile -Command \
-            "Compress-Archive -Path '$OUT_DIR\\*' -DestinationPath '$ROOT_REPO\\artifacts\\vmp-windows-client.zip' -Force"
+            "Compress-Archive -Path '$OUT_DIR\\*' -DestinationPath '$ZIP_PATH' -Force"
 
-          ls -lah "$ROOT_REPO/artifacts/vmp-windows-client.zip"
-          echo "ARTIFACT_ZIP=$ROOT_REPO/artifacts/vmp-windows-client.zip" >> "$GITHUB_ENV"
+          ls -lah "$ZIP_PATH"
+          echo "ARTIFACT_ZIP=$ZIP_PATH" >> "$GITHUB_ENV"
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vmp-windows-client-${{ inputs.release_tag }}
+          name: vmp-windows-client-${{ env.RELEASE_TAG }}
           path: ${{ env.ARTIFACT_ZIP }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
-          name: Windows client ${{ inputs.release_tag }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Windows client ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          make_latest: ${{ inputs.make_latest }}
+          make_latest: true
           generate_release_notes: true
           body: |
-            Windows client CI build from `${{ github.ref_name }}` (`${{ github.sha }}`).
+            Automatic Windows client build from `ci/release-windows-client`.
 
-            This zip is the **developer `code/bin/five/release` layout**, not the full VMP website installer.
-            Use it to test the crash-logging changes on top of an existing VMP install.
+            - Commit: `${{ github.sha }}`
+            - Branch: `${{ github.ref_name }}`
+            - Tag: `${{ env.RELEASE_TAG }}`
+
+            Zip = developer `code/bin/five/release` layout (not the full VMP website installer).
           files: ${{ env.ARTIFACT_ZIP }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
