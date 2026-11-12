@@ -10,7 +10,13 @@ if [[ ! -f "$VSWHERE" ]]; then
 	exit 1
 fi
 
-VS_PATH="$("$VSWHERE" -latest -prerelease -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r')"
+# Prefer VS 2022. windows-latest may expose VS 18 (2026) as -latest, which lacks
+# the .NET 4.6 targeting pack / SDK combo this tree expects.
+VS_PATH="$("$VSWHERE" -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r' | head -n1)"
+if [[ -z "$VS_PATH" ]]; then
+	VS_PATH="$("$VSWHERE" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r' | head -n1)"
+fi
+
 MSBUILD="${VS_PATH}/MSBuild/Current/Bin/MSBuild.exe"
 if [[ ! -f "$MSBUILD" ]]; then
 	echo "::error::MSBuild not found at $MSBUILD"
@@ -18,6 +24,20 @@ if [[ ! -f "$MSBUILD" ]]; then
 fi
 
 echo "Using MSBuild: $MSBUILD"
+
+# Premake pins 10.0.22000.0; GHA images often only ship 22621/26100.
+WIN_SDK="10.0.22000.0"
+SDK_INCLUDE="/c/Program Files (x86)/Windows Kits/10/Include"
+if [[ ! -d "${SDK_INCLUDE}/${WIN_SDK}" ]]; then
+	if [[ -d "${SDK_INCLUDE}/10.0.26100.0" ]]; then
+		WIN_SDK="10.0.26100.0"
+	elif [[ -d "${SDK_INCLUDE}/10.0.22621.0" ]]; then
+		WIN_SDK="10.0.22621.0"
+	elif [[ -d "$SDK_INCLUDE" ]]; then
+		WIN_SDK="$(ls -1 "$SDK_INCLUDE" | sort -V | tail -n1)"
+	fi
+fi
+echo "Using Windows SDK: $WIN_SDK"
 
 export GYP_MSVS_VERSION=2022
 export npm_config_msvs_version=2022
@@ -56,7 +76,17 @@ fi
 
 cd "$BUILD_DIR"
 
-"$MSBUILD" CitizenMP.sln -t:build -restore -p:RestorePackagesConfig=true -p:preferredtoolarchitecture=x64 -p:configuration=release -maxcpucount:"$JOB_SLOTS" -v:q -fl1 "-flp1:logfile=errors.log;errorsonly"
+"$MSBUILD" CitizenMP.sln \
+	-t:build \
+	-restore \
+	-p:RestorePackagesConfig=true \
+	-p:preferredtoolarchitecture=x64 \
+	-p:configuration=release \
+	-p:WindowsTargetPlatformVersion="$WIN_SDK" \
+	-maxcpucount:"$JOB_SLOTS" \
+	-v:q \
+	-fl1 \
+	"-flp1:logfile=errors.log;errorsonly"
 MSBUILD_ERROR=$?
 
 if [[ $MSBUILD_ERROR -eq 0 ]]; then
