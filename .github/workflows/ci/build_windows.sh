@@ -57,26 +57,16 @@ echo "Using Windows SDK: $WIN_SDK"
 export GYP_MSVS_VERSION=2022
 export npm_config_msvs_version=2022
 
-PYTHON_BIN=""
-if command -v py >/dev/null 2>&1; then
-	PYTHON_BIN="$(py -3.11 -c "import sys; print(sys.executable)" 2>/dev/null || true)"
-fi
-if [[ -z "$PYTHON_BIN" ]] && command -v python >/dev/null 2>&1; then
-	PYTHON_BIN="$(command -v python)"
-fi
-if [[ -z "$PYTHON_BIN" ]]; then
-	echo "::error::Python 3 not found"
+if ! command -v py >/dev/null 2>&1; then
+	echo "::error::py launcher required (mojo/udis86 hardcode py -3)"
 	exit 1
 fi
+PYTHON_BIN="$(py -3 -c "import sys; print(sys.executable)")"
 export npm_config_python="$PYTHON_BIN"
-"$PYTHON_BIN" -m pip install --upgrade setuptools wheel six jinja2 markupsafe ply >/dev/null
+# Install into the same interpreter `py -3` resolves to.
+py -3 -m pip install --upgrade setuptools wheel six jinja2 markupsafe ply >/dev/null
+py -3 -c "import six,jinja2,markupsafe,ply"
 echo "python: $PYTHON_BIN"
-
-# Ensure `py -3` works for mojo/udis86 prebuild hooks (they hardcode it).
-if ! py -3 -c "import sys; assert sys.version_info[0] == 3" >/dev/null 2>&1; then
-	echo "::error::py -3 launcher required (mojo/udis86 scripts)"
-	exit 1
-fi
 
 # Keep MSYS tools available for prebuild_natives.cmd (pacman/make/diff).
 export PATH="$PATH:/c/msys64/usr/bin:/c/msys64/mingw64/bin"

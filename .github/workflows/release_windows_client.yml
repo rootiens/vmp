@@ -105,7 +105,8 @@ jobs:
         shell: bash
         run: |
           npm install -g yarn
-          python -m pip install --upgrade pip setuptools wheel six jinja2 markupsafe ply
+          # mojo/udis86 hardcode `py -3` — install into THAT interpreter, not plain `python`.
+          py -3 -m pip install --upgrade pip setuptools wheel six jinja2 markupsafe ply
           py -3 -c "import six,jinja2,markupsafe,ply; print('py -3 ok', __import__('sys').version)"
 
       - name: Compute cache keys
