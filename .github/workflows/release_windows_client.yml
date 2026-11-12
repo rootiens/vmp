@@ -40,17 +40,67 @@ jobs:
           mkdir -p "$ROOT_REPO" "$ROOT_DEP"
           echo "Building ${{ github.sha }} as tag $RELEASE_TAG"
 
-      - name: Checkout branch
+      - name: Check git.vmp.ir credentials
         shell: bash
+        env:
+          VMP_GIT_TOKEN: ${{ secrets.VMP_GIT_TOKEN }}
+          VMP_GIT_USERNAME: ${{ secrets.VMP_GIT_USERNAME }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${VMP_GIT_TOKEN:-}" ]]; then
+            echo "::error::Missing secret VMP_GIT_TOKEN. All vendor submodules are on private https://git.vmp.ir and CI cannot clone them without auth."
+            echo "::error::Add repo secret VMP_GIT_TOKEN (GitLab PAT/deploy token with read_repository). Optional secret VMP_GIT_USERNAME (default: oauth2)."
+            echo "::error::GitHub → rootiens/vmp → Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          echo "VMP_GIT_TOKEN is present"
+          if [[ -n "${VMP_GIT_USERNAME:-}" ]]; then
+            echo "VMP_GIT_USERNAME is present"
+          else
+            echo "VMP_GIT_USERNAME empty; will use oauth2"
+          fi
+
+      - name: Checkout branch + private submodules
+        shell: bash
+        env:
+          VMP_GIT_TOKEN: ${{ secrets.VMP_GIT_TOKEN }}
+          VMP_GIT_USERNAME: ${{ secrets.VMP_GIT_USERNAME }}
         run: |
           set -euo pipefail
           cd "$ROOT_REPO"
+
+          GIT_USER="${VMP_GIT_USERNAME:-oauth2}"
+
+          # Avoid interactive auth prompts in Actions.
+          export GIT_TERMINAL_PROMPT=0
+          export GCM_INTERACTIVE=never
+          git config --global --add safe.directory '*'
+          git config --global credential.helper store
+          git config --global url."https://${GIT_USER}:${VMP_GIT_TOKEN}@git.vmp.ir/".insteadOf "https://git.vmp.ir/"
+          git config --global url."https://${GIT_USER}:${VMP_GIT_TOKEN}@git.vmp.ir/".insteadOf "http://git.vmp.ir/"
+
           git init .
           git config core.symlinks true
           git remote add origin "https://github.com/${{ github.repository }}.git"
           git fetch --depth=1 origin "${{ github.sha }}"
           git checkout --force FETCH_HEAD
-          git submodule update --jobs="$JOB_SLOTS" --init --depth=1
+
+          # Retry submodule sync a few times; private GitLab can flake under parallel clone.
+          status=1
+          for attempt in 1 2 3; do
+            echo "Submodule update attempt $attempt"
+            if git submodule sync --recursive \
+              && git submodule update --jobs="$JOB_SLOTS" --init --recursive --depth=1; then
+              status=0
+              break
+            fi
+            echo "Submodule update failed; retrying..."
+            sleep 5
+          done
+          if [[ "$status" -ne 0 ]]; then
+            echo "::error::Failed to clone private git.vmp.ir submodules. Check VMP_GIT_TOKEN permissions (read_repository) and that the token can access https://git.vmp.ir/vmp/*"
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
