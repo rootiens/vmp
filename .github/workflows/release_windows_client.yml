@@ -1,0 +1,157 @@
+name: Release Windows client
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag name for the GitHub Release (example vmp-client-crashlog-1)
+        required: true
+        type: string
+      make_latest:
+        description: Mark this GitHub Release as latest
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: release-windows-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_and_release:
+    name: Build FiveM Windows + Release
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      PROGRAM: five
+    steps:
+      - name: Prepare workspace
+        shell: bash
+        run: |
+          ROOT="C:/b"
+          ROOT_REPO="$ROOT/five"
+          ROOT_DEP="$ROOT/dep"
+          JOB_SLOTS=$(nproc --all)
+
+          echo "ROOT_REPO=$ROOT_REPO" >> "$GITHUB_ENV"
+          echo "ROOT_DEP=$ROOT_DEP" >> "$GITHUB_ENV"
+          echo "JOB_SLOTS=$JOB_SLOTS" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
+
+          mkdir -p "$ROOT_REPO" "$ROOT_DEP"
+
+      - name: Checkout branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$ROOT_REPO"
+          git init .
+          git config core.symlinks true
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          git fetch --depth=1 origin "${{ github.sha }}"
+          git checkout --force FETCH_HEAD
+          git submodule update --jobs="$JOB_SLOTS" --init --depth=1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Yarn + Python setuptools
+        shell: bash
+        run: |
+          npm install -g yarn
+          python -m pip install --upgrade pip setuptools
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-crt-git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-headers-git
+            mingw-w64-x86_64-libsystre
+            mingw-w64-x86_64-python
+            make
+            tar
+
+      - name: Compile Windows client
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$ROOT_REPO"
+          export PROGRAM=five
+          chmod +x .github/workflows/ci/build_windows.sh
+          .github/workflows/ci/build_windows.sh "$ROOT_DEP" "$JOB_SLOTS"
+
+      - name: Stage release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$ROOT_REPO"
+
+          OUT_DIR="$ROOT_REPO/artifacts/vmp-windows-client"
+          rm -rf "$OUT_DIR" "$ROOT_REPO/artifacts/vmp-windows-client.zip"
+          mkdir -p "$OUT_DIR"
+
+          if [[ -d code/bin/five/release ]]; then
+            cp -a code/bin/five/release/. "$OUT_DIR/"
+          elif [[ -d code/bin/five/Release ]]; then
+            cp -a code/bin/five/Release/. "$OUT_DIR/"
+          else
+            echo "::error::Release output folder not found under code/bin/five/"
+            find code/bin -maxdepth 3 -type d -print || true
+            exit 1
+          fi
+
+          {
+            echo "repo=${{ github.repository }}"
+            echo "ref=${{ github.ref_name }}"
+            echo "sha=${{ github.sha }}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "note=Developer Windows client binaries from CI. Replace into an existing VMP install for testing; this is not the full website installer."
+          } > "$OUT_DIR/BUILD_INFO.txt"
+
+          powershell.exe -NoProfile -Command \
+            "Compress-Archive -Path '$OUT_DIR\\*' -DestinationPath '$ROOT_REPO\\artifacts\\vmp-windows-client.zip' -Force"
+
+          ls -lah "$ROOT_REPO/artifacts/vmp-windows-client.zip"
+          echo "ARTIFACT_ZIP=$ROOT_REPO/artifacts/vmp-windows-client.zip" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmp-windows-client-${{ inputs.release_tag }}
+          path: ${{ env.ARTIFACT_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Windows client ${{ inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: ${{ inputs.make_latest }}
+          generate_release_notes: true
+          body: |
+            Windows client CI build from `${{ github.ref_name }}` (`${{ github.sha }}`).
+
+            This zip is the **developer `code/bin/five/release` layout**, not the full VMP website installer.
+            Use it to test the crash-logging changes on top of an existing VMP install.
+          files: ${{ env.ARTIFACT_ZIP }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
