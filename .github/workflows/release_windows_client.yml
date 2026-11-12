@@ -18,7 +18,8 @@ concurrency:
 jobs:
   build_and_release:
     name: Build FiveM Windows + Release
-    runs-on: windows-latest
+    # windows-2022 keeps VS2022 + .NET 4.6 targeting pack; windows-latest may be VS18-only.
+    runs-on: windows-2022
     timeout-minutes: 360
     env:
       PROGRAM: five
@@ -100,11 +101,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Yarn + Python setuptools
+      - name: Install Yarn + Python deps
         shell: bash
         run: |
           npm install -g yarn
-          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip setuptools wheel six jinja2 markupsafe ply
+          py -3 -c "import six,jinja2,markupsafe,ply; print('py -3 ok', __import__('sys').version)"
 
       - name: Compute cache keys
         shell: bash

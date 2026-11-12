@@ -10,13 +10,29 @@ if [[ ! -f "$VSWHERE" ]]; then
 	exit 1
 fi
 
-# Prefer VS 2022. windows-latest may expose VS 18 (2026) as -latest, which lacks
-# the .NET 4.6 targeting pack / SDK combo this tree expects.
-VS_PATH="$("$VSWHERE" -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r' | head -n1)"
+VS_PATH=""
+for candidate in \
+	"/c/Program Files/Microsoft Visual Studio/2022/Enterprise" \
+	"/c/Program Files/Microsoft Visual Studio/2022/Professional" \
+	"/c/Program Files/Microsoft Visual Studio/2022/Community"
+do
+	if [[ -f "${candidate}/MSBuild/Current/Bin/MSBuild.exe" ]]; then
+		VS_PATH="$candidate"
+		break
+	fi
+done
+
 if [[ -z "$VS_PATH" ]]; then
-	VS_PATH="$("$VSWHERE" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r' | head -n1)"
+	VS_PATH="$("$VSWHERE" -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | tr -d '\r' | head -n1)"
 fi
 
+if [[ -z "$VS_PATH" ]]; then
+	echo "::error::VS 2022 not found (VS 18+/2026 unsupported for this tree)"
+	exit 1
+fi
+
+# Normalize to Windows path for cmd/MSBuild
+VS_PATH_WIN="$(cygpath -w "$VS_PATH" 2>/dev/null || echo "$VS_PATH" | sed 's|^/c/|C:/|;s|/|\\|g')"
 MSBUILD="${VS_PATH}/MSBuild/Current/Bin/MSBuild.exe"
 if [[ ! -f "$MSBUILD" ]]; then
 	echo "::error::MSBuild not found at $MSBUILD"
@@ -25,7 +41,6 @@ fi
 
 echo "Using MSBuild: $MSBUILD"
 
-# Premake pins 10.0.22000.0; GHA images often only ship 22621/26100.
 WIN_SDK="10.0.22000.0"
 SDK_INCLUDE="/c/Program Files (x86)/Windows Kits/10/Include"
 if [[ ! -d "${SDK_INCLUDE}/${WIN_SDK}" ]]; then
@@ -42,7 +57,6 @@ echo "Using Windows SDK: $WIN_SDK"
 export GYP_MSVS_VERSION=2022
 export npm_config_msvs_version=2022
 
-# Prefer CPython from setup-python / py launcher — not MSYS/MinGW python.
 PYTHON_BIN=""
 if command -v py >/dev/null 2>&1; then
 	PYTHON_BIN="$(py -3.11 -c "import sys; print(sys.executable)" 2>/dev/null || true)"
@@ -50,17 +64,41 @@ fi
 if [[ -z "$PYTHON_BIN" ]] && command -v python >/dev/null 2>&1; then
 	PYTHON_BIN="$(command -v python)"
 fi
-if [[ -n "$PYTHON_BIN" ]]; then
-	export npm_config_python="$PYTHON_BIN"
-	"$PYTHON_BIN" -m pip install --upgrade setuptools wheel >/dev/null
-	echo "node-gyp python: $PYTHON_BIN"
+if [[ -z "$PYTHON_BIN" ]]; then
+	echo "::error::Python 3 not found"
+	exit 1
 fi
+export npm_config_python="$PYTHON_BIN"
+"$PYTHON_BIN" -m pip install --upgrade setuptools wheel six jinja2 markupsafe ply >/dev/null
+echo "python: $PYTHON_BIN"
+
+# Ensure `py -3` works for mojo/udis86 prebuild hooks (they hardcode it).
+if ! py -3 -c "import sys; assert sys.version_info[0] == 3" >/dev/null 2>&1; then
+	echo "::error::py -3 launcher required (mojo/udis86 scripts)"
+	exit 1
+fi
+
+# Keep MSYS tools available for prebuild_natives.cmd (pacman/make/diff).
+export PATH="$PATH:/c/msys64/usr/bin:/c/msys64/mingw64/bin"
 
 pwsh ./fxd.ps1 get-chrome
 
-# Run prebuild under a VS developer environment so node-gyp can compile ffi-napi.
-VCVARS="${VS_PATH}\\VC\\Auxiliary\\Build\\vcvars64.bat"
-cmd.exe /c "call \"${VCVARS}\" && prebuild.cmd"
+VCVARS="${VS_PATH_WIN}\\VC\\Auxiliary\\Build\\vcvars64.bat"
+echo "Running prebuild via $VCVARS"
+cmd.exe /c "call \"${VCVARS}\" >nul && set \"PATH=%PATH%;C:\\msys64\\usr\\bin;C:\\msys64\\mingw64\\bin\" && prebuild.cmd"
+echo "prebuild exit=$?"
+
+if [[ ! -f vendor/udis86/libudis86/itab.c ]]; then
+	echo "itab.c missing after prebuild — generating"
+	(
+		cd vendor/udis86
+		py -3 scripts/ud_itab.py docs/x86/optable.xml ./libudis86/
+	)
+fi
+if [[ ! -f vendor/udis86/libudis86/itab.c || ! -f vendor/udis86/libudis86/itab.h ]]; then
+	echo "::error::udis86 itab.c/itab.h still missing"
+	exit 1
+fi
 
 pwsh ./fxd.ps1 gen -game "$PROGRAM"
 
