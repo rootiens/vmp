@@ -104,15 +104,56 @@ jobs:
         shell: bash
         run: |
           npm install -g yarn
-          python -m pip install --upgrade pip setuptools
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Compute cache keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$ROOT_REPO"
+          CEF_KEY="none"
+          if [[ -f vendor/cef/cef_build_name.txt ]]; then
+            CEF_KEY=$(tr -d '[:space:]' < vendor/cef/cef_build_name.txt)
+          fi
+          YARN_KEY=$(cat ext/native-doc-tooling/yarn.lock 2>/dev/null | sha256sum | awk '{print $1}')
+          echo "CACHE_CEF_KEY=$CEF_KEY" >> "$GITHUB_ENV"
+          echo "CACHE_YARN_KEY=${YARN_KEY:-none}" >> "$GITHUB_ENV"
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ROOT_REPO }}/code/build
+          key: cef-${{ env.CACHE_CEF_KEY }}
+          restore-keys: |
+            cef-
+
+      - name: Cache yarn (native-doc-tooling)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ROOT_REPO }}/ext/native-doc-tooling/node_modules
+            ~/AppData/Local/Yarn/Cache
+          key: yarn-ndt-${{ env.CACHE_YARN_KEY }}
+          restore-keys: |
+            yarn-ndt-
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-win-v1
+          restore-keys: |
+            nuget-win-
 
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          update: true
+          # Use the runner's preinstalled C:\msys64 — skips ~9min fresh install.
+          release: false
+          update: false
+          cache: true
           install: >-
-            git
             mingw-w64-x86_64-binutils
             mingw-w64-x86_64-crt-git
             mingw-w64-x86_64-gcc
@@ -121,6 +162,7 @@ jobs:
             mingw-w64-x86_64-python
             make
             tar
+            diffutils
 
       - name: Compile Windows client
         shell: bash
@@ -128,6 +170,9 @@ jobs:
           set -euo pipefail
           cd "$ROOT_REPO"
           export PROGRAM=five
+          # prebuild_natives.cmd expects pacman/make from C:\msys64, but keep
+          # setup-python/node ahead of MinGW so node-gyp does not pick MinGW python.
+          export PATH="$PATH:/c/msys64/usr/bin:/c/msys64/mingw64/bin"
           chmod +x .github/workflows/ci/build_windows.sh
           .github/workflows/ci/build_windows.sh "$ROOT_DEP" "$JOB_SLOTS"
 

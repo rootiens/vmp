@@ -169,12 +169,17 @@ if (!$IsServer) {
         Remove-Item -Force $LayoutDir\citizen\system_resources\monitor\starter.js
     }
 
-	# for public source builds, remove adhesive from the components list
-	if (!(Test-Path $LayoutDir\svadhesive.dll)) {
-		(Get-Content $LayoutDir\components.json | ConvertFrom-Json) | 
-		Where-Object { $_ -ne "svadhesive" } | 
-		ConvertTo-Json | 
-		Set-Content $LayoutDir\components.json
+	# for public source builds, remove private-only components from the list
+	$componentsJson = Join-Path $LayoutDir "components.json"
+	if (Test-Path $componentsJson) {
+		$components = @(Get-Content $componentsJson | ConvertFrom-Json)
+		if (!(Test-Path $LayoutDir\svadhesive.dll)) {
+			$components = @($components | Where-Object { $_ -ne "svadhesive" })
+		}
+		if (!(Test-Path $LayoutDir\stronghold.dll)) {
+			$components = @($components | Where-Object { $_ -ne "stronghold" })
+		}
+		$components | ConvertTo-Json | Set-Content $componentsJson
 	}
     
     # useless client-related scripting stuff
