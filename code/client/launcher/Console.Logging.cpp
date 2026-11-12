@@ -312,7 +312,7 @@ static void PruneOldLogs()
 	GetSystemTime(&curTime);
 
 	std::error_code ec;
-	auto logsPath = MakeRelativeCitPath(L"logs/");
+	std::filesystem::path logsPath{ MakeRelativeCitPath(L"logs/").c_str() };
 
 	if (!std::filesystem::exists(logsPath, ec))
 	{

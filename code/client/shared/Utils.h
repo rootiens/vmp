@@ -293,14 +293,15 @@ void SetThreadName(int threadId, const char* threadName);
 std::wstring ToWide(std::string_view narrow);
 std::string ToNarrow(std::wstring_view wide);
 
+#if (defined(COMPILING_CORE) || defined(COMPILING_LAUNCHER)) && defined(_WIN32) && !defined(IS_FXSERVER)
+extern "C" void DLL_EXPORT FlushCrashLog();
+extern "C" void DLL_EXPORT SyncCriticalTrace(const char* string);
+#endif
+
 #ifdef COMPILING_CORE
 extern "C" bool DLL_EXPORT CoreIsDebuggerPresent();
 extern "C" void DLL_EXPORT CoreSetDebuggerPresent();
 extern "C" void DLL_EXPORT CoreTrace(const char* channel, const char* func, const char* file, int line, const char* string);
-#if defined(_WIN32) && !defined(IS_FXSERVER)
-extern "C" void DLL_EXPORT FlushCrashLog();
-extern "C" void DLL_EXPORT SyncCriticalTrace(const char* string);
-#endif
 #elif _WIN32
 inline bool CoreIsDebuggerPresent()
 {
@@ -340,7 +341,7 @@ inline void CoreTrace(const char* channel, const char* funcName, const char* fil
 	(func) ? func(channel, funcName, file, line, string) : (void)0;
 }
 
-#ifndef IS_FXSERVER
+#if !defined(IS_FXSERVER) && !defined(COMPILING_LAUNCHER)
 inline void FlushCrashLog()
 {
 	using TFunc = void(*)();
