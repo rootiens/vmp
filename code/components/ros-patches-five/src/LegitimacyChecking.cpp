@@ -965,6 +965,11 @@ namespace ros
 	{
 		return g_entitlementSource;
 	}
+
+	__declspec(noinline) std::string GetApiIdentifier()
+	{
+		return GetEntitlementSource();
+	}
 }
 
 void LoadOwnershipEarly()

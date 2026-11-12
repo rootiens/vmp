@@ -104,26 +104,40 @@ fi
 
 cd "$BUILD_DIR"
 
-"$MSBUILD" CitizenMP.sln \
-	-t:build \
-	-restore \
-	-p:RestorePackagesConfig=true \
-	-p:preferredtoolarchitecture=x64 \
-	-p:configuration=release \
-	-p:WindowsTargetPlatformVersion="$WIN_SDK" \
-	-maxcpucount:"$JOB_SLOTS" \
-	-v:q \
-	-fl1 \
-	"-flp1:logfile=errors.log;errorsonly"
-MSBUILD_ERROR=$?
-
-if [[ $MSBUILD_ERROR -eq 0 ]]; then
-	echo "Successfully build $PROGRAM"
-else
-	RED=$'\e[31m'
-	echo "::error::Failed to build $PROGRAM, MSBuild returned with error code: $MSBUILD_ERROR"
-	if [[ -f errors.log ]]; then
-		while IFS= read -r LINE; do echo "$RED$LINE"; done < errors.log
+msbuild_run() {
+	local label="$1"
+	shift
+	echo "MSBuild [$label]: $*"
+	set +e
+	"$MSBUILD" "$@" \
+		-p:RestorePackagesConfig=true \
+		-p:preferredtoolarchitecture=x64 \
+		-p:configuration=release \
+		-p:WindowsTargetPlatformVersion="$WIN_SDK" \
+		-maxcpucount:"$JOB_SLOTS" \
+		-v:q \
+		-fl1 \
+		"-flp1:logfile=errors.log;errorsonly"
+	local rc=$?
+	set -e
+	if [[ $rc -ne 0 ]]; then
+		RED=$'\e[31m'
+		echo "::error::MSBuild [$label] failed with code $rc"
+		if [[ -f errors.log ]]; then
+			while IFS= read -r LINE; do echo "$RED$LINE"; done < errors.log
+		fi
+		exit "$rc"
 	fi
-	exit "$MSBUILD_ERROR"
-fi
+}
+
+# Smoke gate: fail fast on VMP-touched leaves before full solution (~saves 20–40min).
+for proj in ros-patches-five discord glue; do
+	if [[ -f "${proj}.vcxproj" ]]; then
+		msbuild_run "smoke:${proj}" "${proj}.vcxproj" -t:ClCompile -restore
+	else
+		echo "warn: ${proj}.vcxproj missing — skip smoke"
+	fi
+done
+
+msbuild_run "full" CitizenMP.sln -t:build -restore
+echo "Successfully build $PROGRAM"

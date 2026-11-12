@@ -167,6 +167,14 @@ jobs:
             tar
             diffutils
 
+      - name: Preflight (seconds, no compile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$ROOT_REPO"
+          chmod +x .github/workflows/ci/preflight_windows.sh
+          .github/workflows/ci/preflight_windows.sh
+
       - name: Compile Windows client
         shell: bash
         run: |

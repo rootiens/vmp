@@ -8,4 +8,10 @@ namespace ros
 		DLL_EXPORT
 #endif
 		GetEntitlementSource();
+
+	std::string
+#if defined(COMPILING_ROS_PATCHES_FIVE) || defined(COMPILING_ROS_PATCHES_RDR3) || defined(COMPILING_ROS_PATCHES_NY)
+		DLL_EXPORT
+#endif
+		GetApiIdentifier();
 }
